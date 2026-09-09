@@ -1,10 +1,10 @@
 # Building 6 VLANs on OPNsense with One NIC and No Switch (Proxmox Homelab)
 
-A step-by-step guide to segmenting a homelab into 6 VLANs — **Guest, AI, SOC, Cloud, Deception, Targets** — using OPNsense as a virtual router inside Proxmox, with only **one physical NIC** and **no managed switch**. Includes every real error I hit along the way and how I fixed it.
+This guide explains how to segment a homelab into 6 VLANs (**Guest, AI, SOC, Cloud, Deception, Targets**) using OPNsense as a virtual router inside Proxmox, with only **one physical NIC** and **no managed switch**. It includes practical configuration details and troubleshooting steps validated during implementation.
 
 ## Why this guide exists
 
-Most OPNsense/Proxmox VLAN tutorials assume you already have a managed switch handling the tagging. This guide is for the harder, more common homelab starting point: **one NIC, zero extra hardware**. Everything here is built entirely virtually inside Proxmox first — physical device access comes later once you add a second NIC.
+Most OPNsense and Proxmox VLAN guides assume a managed switch is already handling VLAN tagging. This walkthrough documents a common starting point for homelabs: **one NIC and no additional network hardware**. The initial design is fully virtual inside Proxmox; physical VLAN access can be added later with a second NIC.
 
 ---
 
@@ -34,7 +34,7 @@ Home Router (does real internet NAT)
 (10)  (20)  (30)  (40)   (50)   (60)
 ```
 
-**Key insight:** with only one NIC, that NIC becomes OPNsense's WAN uplink to your home router. All 6 VLANs live on a second bridge (`vmbr1`) that has **no physical port at all** — it only exists inside Proxmox. This means, until you add a second NIC, only VMs can reach the VLANs; physical devices (like your laptop) cannot.
+With a single NIC, that NIC is used for OPNsense WAN uplink to the home router. All six VLANs are hosted on `vmbr1`, which has **no physical bridge port** and exists only inside Proxmox. Until a second NIC is added, VLAN access is limited to VMs hosted on Proxmox.
 
 ---
 
@@ -45,24 +45,26 @@ Home Router (does real internet NAT)
 `Proxmox → node → System → Network → Create → Linux Bridge`
 
 - Name: `vmbr1`
-- Bridge port: **leave empty** — this is intentional, it's a purely internal bridge
+- Bridge port: **leave empty** (this is an internal-only bridge)
 - Check **VLAN aware**
 - No IP address needed
 - Apply
 
-*(Your existing `vmbr0`, tied to the physical NIC, is untouched — that stays as WAN.)*
+The screenshot below shows this bridge configuration in context, including `vmbr0` remaining mapped to the physical NIC for WAN traffic.
 
 ![Proxmox Create Linux Bridge dialog](./images/06-proxmox-create-linux-bridge.png)
-*Proxmox → Network. `vmbr1` already exists as a VLAN-aware bridge with no bridge ports (visible in the table behind the dialog), `vmbr0` carries the physical NIC and the gateway.*
+*`vmbr1` is configured as a VLAN-aware internal bridge with no bridge ports; `vmbr0` remains the physical uplink bridge.*
 
 ### 1.2 Give OPNsense two virtual NICs
 
-VM → Hardware:
+In the OPNsense VM hardware settings:
 - `net0` → bridge `vmbr0` (WAN)
-- `net1` → bridge `vmbr1`, **VLAN Tag left blank** (this makes it a trunk carrying all 6 VLANs)
+- `net1` → bridge `vmbr1`, **VLAN Tag left blank** (trunk carrying all VLAN tags)
+
+The hardware view confirms the WAN/LAN trunk split required for this topology.
 
 ![OPNsense VM Hardware tab](./images/07-proxmox-opnsense-vm-hardware.png)
-*OPNsense VM Hardware page — `net0=vmbr0` (WAN), `net1=vmbr1` (LAN trunk, no tag).*
+*`net0=vmbr0` provides WAN connectivity, while `net1=vmbr1` carries the internal VLAN trunk without a tag on the parent interface.*
 
 ---
 
@@ -70,7 +72,7 @@ VM → Hardware:
 
 ### 2.1 Create VLAN interfaces
 
-`Interfaces → Other Types → VLAN → Add` — repeat 6 times, parent interface = your LAN NIC (shows as `vtnet0` in this build):
+`Interfaces → Other Types → VLAN → Add` and repeat six times. Set the parent interface to your LAN trunk NIC (shown as `vtnet0` in this environment):
 
 | VLAN Tag | Name | Purpose |
 |---|---|---|
@@ -81,17 +83,19 @@ VM → Hardware:
 | 50 | guests | Guest devices |
 | 60 | targets | Target systems |
 
+This screenshot shows all six VLAN definitions attached to the same parent trunk interface.
+
 ![OPNsense VLAN creation](./images/08-opnsense-vlan-creation.png)
-*Interfaces → Other Types → VLAN. All 6 VLANs created on the trunk parent, tags 10–60.*
+*Each VLAN tag (10–60) is created under the trunk parent interface, which enables per-VLAN interface assignment in the next step.*
 
 ### 2.2 Assign each VLAN as an interface
 
-`Interfaces → Assignments` — pick each `VLAN00xx on vtnet0` entry from the dropdown (**not** the raw parent interface, and **not** the existing default LAN) and add it.
+`Interfaces → Assignments` — add each `VLAN00xx on vtnet0` entry from the dropdown. Do **not** assign the untagged parent interface and do **not** reuse the original default LAN as a substitute for tagged VLAN interfaces.
 
-> ⚠️ **Gotcha:** Don't assign the plain parent interface (`vtnet0` with no tag) — that's the trunk itself, not a VLAN. Only assign the tagged `VLAN00xx` sub-interfaces.
+The assignment table below confirms each `optX` interface is mapped to the correct VLAN sub-interface.
 
 ![OPNsense interface assignments](./images/09-opnsense-interface-assignments.png)
-*Interfaces → Assignments. Each `optX` slot mapped to its VLAN — tag 10 = ai, 20 = blue, 30 = cloud, 40 = deception, 50 = guests, 60 = targets.*
+*Each interface slot is explicitly bound to a tagged VLAN sub-interface (10, 20, 30, 40, 50, 60).*
 
 Static IPs used:
 
@@ -104,10 +108,12 @@ Static IPs used:
 | guests | 192.168.50.1/24 |
 | targets | 192.168.60.1/24 |
 
-![OPNsense dashboard showing all interfaces up](./images/01-dashboard-interfaces.png)
-*Dashboard confirming all 7 interfaces (LAN + 6 VLANs) are assigned, enabled, and holding their gateway IPs.*
+After assigning and enabling interfaces, verify that each VLAN gateway address is active.
 
-**Why /24 for every VLAN?** 254 usable hosts per subnet is far more than a homelab VLAN needs, and it keeps the math identical across all six (`.1` = gateway, `.100–.200` = DHCP pool). No reason to subnet smaller at this scale.
+![OPNsense dashboard showing all interfaces up](./images/01-dashboard-interfaces.png)
+*The dashboard confirms all VLAN interfaces are enabled and holding their configured gateway IPs.*
+
+A `/24` per VLAN is intentionally used for operational simplicity: the addressing pattern remains consistent across all segments (`.1` gateway, `.100–.200` DHCP pool) while still leaving ample host capacity.
 
 ---
 
@@ -115,21 +121,21 @@ Static IPs used:
 
 ### 3.1 Kea vs Dnsmasq — which to use
 
-OPNsense ships two options. **Use Dnsmasq**, not Kea, for a setup this size:
+OPNsense provides both Kea and Dnsmasq. For this homelab size, **Dnsmasq** is the practical default:
 
-- Dnsmasq bundles DNS + DHCP together — you get local hostname resolution for free
-- Kea is built for large/enterprise-scale deployments and doesn't auto-register hostnames into DNS without extra plugins
-- For 6 small VLANs with a handful of VMs each, Dnsmasq is simpler and does everything you need
+- Dnsmasq combines DNS and DHCP, enabling local hostname resolution with minimal setup.
+- Kea is designed for larger deployments and usually requires additional integration work for comparable DNS behavior.
+- For six small VLANs, Dnsmasq is simpler to operate and sufficient for typical lab requirements.
 
-> ⚠️ **If you're migrating from Kea to Dnsmasq:** disable Kea's DHCP on the interface first, or you'll get "address already in use" — only one DHCP server can bind per interface.
+If migrating from Kea to Dnsmasq, disable Kea DHCP on the interface first; only one DHCP service can bind to the same interface at a time.
 
 ### 3.2 Configure Dnsmasq
 
-Only two tabs actually matter:
+Two areas are essential:
 
-**General** — enable the service, and select **all 6 VLANs + LAN** in the Interfaces list. (Miss one here and it won't serve DHCP there no matter what you set in ranges.)
+**General** — enable Dnsmasq and include **all 6 VLAN interfaces plus LAN** in the interface selection.
 
-**DHCP ranges** — one entry per VLAN:
+**DHCP ranges** — create one range per VLAN:
 
 | Interface | Start | End |
 |---|---|---|
@@ -140,33 +146,35 @@ Only two tabs actually matter:
 | guests | 192.168.50.100 | 192.168.50.200 |
 | targets | 192.168.60.100 | 192.168.60.200 |
 
-Leave Domains, Hosts, DHCP options, DHCP boot, and DHCP tags at default — none of these are required for basic operation.
+Leave Domains, Hosts, DHCP options, DHCP boot, and DHCP tags at defaults unless you have a specific requirement.
+
+The following view shows a representative DHCP range entry for the `ai` interface.
 
 ![Dnsmasq DHCP range dialog](./images/02-dnsmasq-dhcp-range.png)
-*Services → Dnsmasq DNS & DHCP → DHCP ranges. Interface `ai`, range 192.168.10.100–200.*
+*Dnsmasq DHCP range configuration example for `ai`: `192.168.10.100` to `192.168.10.200`.*
 
 ---
 
-## Part 4: NAT + Firewall Rules (the step everyone misses)
+## Part 4: NAT + Firewall Rules
 
 ### 4.1 NAT Outbound
 
-`Firewall → NAT → Outbound` → confirm mode is **Automatic**. If it's on Manual and you don't have a specific reason, switch it back — Manual mode requires an explicit outbound rule per subnet or new VLANs get no internet at all.
+`Firewall → NAT → Outbound` — verify mode is **Automatic**. If set to Manual without full outbound coverage for each subnet, newly created VLANs may not have internet egress.
 
 ### 4.2 Firewall pass rules — required on every VLAN tab
 
-**A brand-new OPNsense interface starts with zero rules, and the default is deny-all.** For each of the 6 interface tabs (`Firewall → Rules → [interface]`):
+A newly created OPNsense interface starts with no allow rules (default deny). For each VLAN interface tab (`Firewall → Rules → [interface]`), add:
 
 - Action: **Pass**
 - Protocol: **any**
-- Source: **`[interface] net`** ⚠️ see error below
+- Source: **`[interface] net`**
 - Destination: **any**
-- Save, repeat for all 6, then Apply
+- Save and apply
 
-> 🐛 **Real error I hit:** I set Source to **"[interface] address"** instead of **"[interface] net"**. `address` only matches traffic from OPNsense's own interface IP — basically nothing from actual VMs ever matches it. This silently blocked all VM traffic even though a rule technically existed. **Always use `net`, not `address`, for VLAN pass rules.**
+A common misconfiguration is using **`[interface] address`** as source. That only matches traffic originating from OPNsense itself and will not match VM traffic on the subnet.
 
 ![Firewall rule - address vs net mistake](./images/03-firewall-rule-address-vs-net.png)
-*The exact mistake: Source set to "ai address" instead of "ai net" — looks correct at a glance, but blocks every real VM.*
+*Use `[interface] net` for VLAN client traffic. `[interface] address` targets only the firewall interface IP and blocks expected VM flows.*
 
 ---
 
@@ -174,17 +182,19 @@ Leave Domains, Hosts, DHCP options, DHCP boot, and DHCP tags at default — none
 
 For each VM:
 - Hardware → Network Device → bridge = `vmbr1`
-- **VLAN Tag** = the number for that VLAN (e.g. `30` for a SOC VM)
-- Inside the guest OS: set networking to DHCP
+- **VLAN Tag** = VLAN number for that VM (for example, `30` for the Cloud VLAN)
+- Inside the guest OS: use DHCP
 
-No trunk configuration is needed per VM — Proxmox tags the traffic at the vNIC level.
+No per-VM trunk configuration is required in the guest; Proxmox applies tagging at the virtual NIC configuration level.
+
+The network device settings below show a VM mapped to VLAN 10 through the VLAN tag field.
 
 ![Proxmox VM network device with VLAN tag](./images/10-proxmox-vm-vlan-tag.png)
-*Wazuh VM's Network Device: bridge `vmbr1`, VLAN Tag `10` — this single field is what places the VM into the `ai` VLAN, no OPNsense-side trunk config needed.*
+*Setting bridge `vmbr1` and VLAN Tag `10` places the VM directly into the `ai` VLAN.*
 
 ### Verifying from inside a VM
 
-Since there's no physical path in yet, test from the VM's console (Proxmox noVNC):
+Before adding physical VLAN access, validate connectivity from the VM console (Proxmox noVNC):
 
 ```bash
 ip a                    # should show an IP in the right VLAN subnet
@@ -193,39 +203,48 @@ ping 8.8.8.8              # internet by IP
 ping google.com           # DNS resolution
 ```
 
+The output below demonstrates successful DHCP assignment and internet connectivity from a VLAN-attached VM.
+
 ![Verified working VM on the ai VLAN](./images/11-wazuh-vm-verified-internet.png)
-*End-to-end confirmation on the Wazuh VM: `ip a` shows `192.168.10.129/24` (leased from the `ai` VLAN's DHCP pool), and `ping 8.8.8.8` succeeds with 0% packet loss — proof the DHCP → firewall rule → NAT chain is fully working for this VLAN.*
+*The VM receives `192.168.10.129/24` from the `ai` DHCP pool and reaches external IPs, confirming DHCP, firewall policy, and NAT are operating correctly.*
 
 ---
 
 ## Errors Encountered (Troubleshooting Log)
 
 ### VM got no IP at all (APIPA / 169.254.x.x)
-**Cause:** DHCP broadcast never reached OPNsense — almost always a VLAN tag mismatch.
+**Cause:** DHCP broadcast did not reach OPNsense, most commonly due to a VLAN tag mismatch.
+
 **Fix checklist:**
-1. Confirm `vmbr1` is VLAN aware with no bridge port
-2. Confirm the VM's vNIC bridge = `vmbr1` (not `vmbr0`)
-3. Confirm the VM's VLAN Tag number matches the tag OPNsense created for that VLAN exactly
-4. Confirm a DHCP pool actually exists for that interface (service "running" ≠ pool configured)
-5. Confirm the guest OS is actually set to DHCP, not a leftover static IP from a template
+1. Confirm `vmbr1` is VLAN aware and has no bridge port.
+2. Confirm VM vNIC bridge is `vmbr1` (not `vmbr0`).
+3. Confirm VM VLAN Tag exactly matches the VLAN tag configured in OPNsense.
+4. Confirm a DHCP pool exists for that interface.
+5. Confirm the guest OS is configured for DHCP.
 
 ### VM got IP + could ping gateway, but no internet
-**Cause (in my case):** Firewall rule Source set to `[interface] address` instead of `[interface] net`. See Part 4.2 above.
-**Also check:** NAT Outbound mode set to Automatic.
+**Cause:** Firewall rule source set to `[interface] address` instead of `[interface] net`.
+
+**Also check:** NAT Outbound mode is set to Automatic.
 
 ### SSH to OPNsense timed out
-**Cause:** OPNsense disables SSH by default, and even when enabled, doesn't allow WAN-side management access out of the box.
+**Cause:** OPNsense disables SSH by default and does not allow WAN-side SSH access without an explicit rule.
+
 **Fix:**
-1. `System → Settings → Administration` → enable Secure Shell
-2. Add an explicit `Firewall → Rules → WAN` pass rule for TCP/22, ideally restricted to a specific source IP
-3. ⚠️ Remember this opens SSH to your whole home network, not just you — remove/disable the rule after you're done, or restrict Source tightly
-4. Alternative with zero network exposure: use the Proxmox console directly on the VM (`Console → option 8) Shell`)
+1. `System → Settings → Administration` → enable Secure Shell.
+2. Add `Firewall → Rules → WAN` pass rule for TCP/22.
+3. Restrict source IP as tightly as possible.
+4. After use, remove or disable broad temporary SSH access rules.
+5. Alternative: use the Proxmox VM console (`Console → option 8) Shell`).
+
+The example rule below limits SSH access to a specific source host.
 
 ![Firewall WAN SSH rule](./images/04-firewall-wan-ssh-rule.png)
-*WAN rule restricting SSH (TCP/22) to a single source IP rather than opening it to the whole home network.*
+*Example WAN rule for SSH with source restriction to reduce management exposure.*
 
 ### `tailscale status` — "Failed to connect to local Tailscale daemon"
-**Cause:** `tailscaled` daemon wasn't running — the CLI can't be used until the background service is started.
+**Cause:** `tailscaled` service was not running.
+
 **Fix:**
 ```bash
 service tailscaled status
@@ -233,47 +252,57 @@ service tailscaled start
 ```
 
 ### Tailscale not showing up in the admin console machines list
-**Cause:** `tailscale up` was run but the printed login URL was never opened/authenticated.
-**Fix:** re-run `tailscale up --advertise-routes=...`, actually open the printed URL in a browser and authorize.
+**Cause:** The login URL produced by `tailscale up` was not completed in a browser.
+
+**Fix:** Re-run `tailscale up --advertise-routes=...`, open the printed URL, and complete authorization.
 
 ### After advertising Tailscale routes, home network gateway became unreachable
-**Cause:** Accidentally advertised the home LAN's own subnet (or used an exit node), causing a routing conflict with the network the laptop is already directly wired into.
-**Fix:** Only advertise the 6 VLAN subnets, never your home router's own subnet. Confirm no exit node is set on either the OPNsense node or the client.
+**Cause:** A conflicting route was advertised (for example, the home LAN subnet) or an exit node setting introduced a routing conflict.
 
-### Tailscale doesn't survive an OPNsense reboot
-**Cause:** Known bug in the `os-tailscale` community plugin — `sysrc tailscaled_enable="YES"` doesn't reliably persist because OPNsense regenerates system config from its own templates at boot, silently overwriting manual rc.conf-style edits. (Confirmed as an open upstream issue, not user error.)
+**Fix:** Advertise only the six VLAN subnets and confirm exit node settings are disabled where not required.
 
-**Fix that actually worked:** GUI-side, not terminal. `VPN → Tailscale → Settings` — make sure **Enable** is checked and click **Save** on that page directly (not just via a one-off `service tailscaled start` in the shell). OPNsense's own service manager then handles starting it on boot, since the plugin is meant to be controlled through its own settings page rather than raw `sysrc`/`rc.conf` edits.
+### Tailscale does not survive an OPNsense reboot
+**Cause:** Known behavior with some `os-tailscale` plugin versions when relying on manual service enablement via shell-level configuration.
 
-*(A cron `@reboot` job or the `os-shellcmd` plugin are still valid fallbacks if the GUI toggle alone doesn't stick on your version — but for this build, the GUI Enable+Save was all that was needed.)*
+**Fix that worked in this setup:** `VPN → Tailscale → Settings` — enable Tailscale in the GUI and save from that page so OPNsense manages service startup through its own configuration workflow.
+
+If required, cron `@reboot` or `os-shellcmd` can be used as fallback automation.
 
 ### `sysrc: unknown variable 'tailscaled_enable'`
-**Cause:** Ran `sysrc tailscaled_enable` (a query) before the variable was ever set anywhere — nothing existed to read.
-**Fix:** confirm the real rcvar name first: `grep -i rcvar /usr/local/etc/rc.d/tailscaled`, then set it with `sysrc tailscaled_enable="YES"`.
+**Cause:** Querying `sysrc tailscaled_enable` before the variable is defined.
+
+**Fix:** Verify rcvar name first:
+`grep -i rcvar /usr/local/etc/rc.d/tailscaled`
+
+Then set it:
+`sysrc tailscaled_enable="YES"`
 
 ### `crontab -e` — ":wq is not a vi command"
-**Cause:** Still in insert mode when typing `:wq` — vi interpreted it as literal text, not a command.
-**Fix:** Press `Esc` first (always safe), confirm `-- INSERT --` is gone from the bottom of the screen, then type `:wq` and press Enter. To bail out without saving: `Esc` then `:q!`.
+**Cause:** Command entered while still in insert mode.
+
+**Fix:** Press `Esc`, confirm insert mode is exited, then run `:wq` and Enter. Use `:q!` to exit without saving.
 
 ---
 
 ## Accessing VLAN Services From a Laptop (Before Adding a Second NIC)
 
-With one NIC and no switch, your laptop sits on the home router's network — the same side as OPNsense's WAN — and has no physical path to the VLANs. Two workarounds until a second NIC is added:
+With one NIC and no switch, the laptop remains on the home router network (same side as OPNsense WAN) and does not have a direct physical path to VLAN interfaces. Two interim access methods are practical:
 
-**Option A — Port forward (quick, one service at a time)**
-`Firewall → NAT → Port Forward` → forward a WAN port to the internal VLAN IP/port. Works immediately, but doesn't scale past one or two services.
+**Option A — Port forward (single service access)**
+`Firewall → NAT → Port Forward` to map WAN ports to internal VLAN services.
 
 **Option B — Tailscale subnet routes (recommended for multiple services)**
-Advertise your 6 VLAN subnets from OPNsense via Tailscale, approve them in the admin console, and enable "accept subnet routes" on the laptop's Tailscale client. This gives direct access to real VLAN IPs (e.g. `192.168.30.100` for a SOC service) without managing individual port forwards.
+Advertise all VLAN subnets from OPNsense through Tailscale, approve routes in the admin console, and enable subnet route acceptance on the laptop client.
 
-- OPNsense: Advertise routes = YES (the 6 VLAN CIDRs), Exit node = NO
+- OPNsense: Advertise routes = YES (six VLAN CIDRs), Exit node = NO
 - Laptop: Accept subnet routes = YES, Use exit node = NO
 
-![OPNsense Tailscale advertised routes](./images/05-tailscale-advertised-routes.png)
-*VPN → Tailscale → Settings → Advertised Routes. All 6 VLAN subnets advertised — none of them overlap with the home network's own subnet, which is what avoids the "can't reach my gateway" conflict described below.*
+The configuration below shows the VLAN route advertisements used for remote access without exposing each service through individual port forwards.
 
-**The real fix:** once a second NIC (or USB-to-Ethernet adapter) is added and bridged into `vmbr1`, the laptop becomes physically part of the VLAN network and neither workaround is needed anymore.
+![OPNsense Tailscale advertised routes](./images/05-tailscale-advertised-routes.png)
+*Advertise only VLAN CIDRs to avoid overlap with the home LAN and prevent local gateway routing conflicts.*
+
+The long-term solution is to add a second NIC (or USB Ethernet adapter) and bridge it into `vmbr1` so physical devices can join the VLAN network directly.
 
 ---
 
@@ -286,4 +315,4 @@ Advertise your 6 VLAN subnets from OPNsense via Tailscale, approve them in the a
 
 ---
 
-*Built on OPNsense 26.x, Proxmox VE 8.x. Corrections and PRs welcome.*
+*Built on OPNsense 26.x, Proxmox VE 8.x. Corrections and pull requests are welcome.*
