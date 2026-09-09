@@ -1,12 +1,12 @@
 # Building 6 VLANs on OPNsense with One NIC and No Switch (Proxmox Homelab)
 
-This guide documents a complete OPNsense and Proxmox VLAN lab built with a single physical NIC and no managed switch. It segments traffic into six VLANs — **Guest, AI, SOC, Cloud, Deception, and Targets** — using OPNsense as a virtual router inside Proxmox.
+This guide documents a complete OPNsense and Proxmox VLAN lab built with a single physical NIC and no managed switch. It segments traffic into six VLANs — **Guest, AI, SOC, Cloud, Deception, and Targets** — and adds secure remote reachability using Tailscale subnet routing.
 
 The procedure and troubleshooting notes are based on a working implementation and focus on practical setup details that are easy to miss in first-pass deployments.
 
 ## Why this guide exists
 
-Most VLAN tutorials assume a managed switch is already available for physical tagging. This guide covers a common starting point for homelabs: one NIC and no additional switching hardware. In this design, VLANs are fully virtualized in Proxmox until a second NIC is added.
+Most VLAN tutorials assume a managed switch is already available for physical tagging. This guide covers a common starting point for homelabs: one NIC and no additional switching hardware. In this model, VLAN segmentation still works by carrying tagged traffic on an internal Proxmox bridge that never leaves the host physically.
 
 ## Architecture overview
 
@@ -34,7 +34,7 @@ Home Router (does real internet NAT)
 (10)  (20)  (30)  (40)   (50)   (60)
 ```
 
-With one NIC, that physical link is dedicated to OPNsense WAN uplink traffic. All six VLANs are carried on `vmbr1`, a VLAN-aware internal bridge with no physical bridge port. As a result, only VMs can access VLAN networks until a second NIC is introduced.
+With one NIC, that physical link is dedicated to OPNsense WAN uplink traffic. All six VLANs are carried on `vmbr1`, a VLAN-aware internal bridge with no physical bridge port. As a result, only VMs attached to `vmbr1` with matching VLAN tags participate in those networks.
 
 ## Part 1: Proxmox networking
 
@@ -255,7 +255,7 @@ service tailscaled start
 
 **Cause:** Community `os-tailscale` plugin behavior can overwrite manual `sysrc` persistence during boot.
 
-**Resolution that worked in this setup:** Use `VPN → Tailscale → Settings`, enable the plugin there, and save from the plugin settings page. This hands startup management back to OPNsense services.
+**Resolution that worked in this setup:** Use `VPN → Tailscale → Settings`, enable the plugin there, and save from the plugin settings page. This hands startup management back to OPNsense service integration.
 
 Fallback options such as `@reboot` jobs or `os-shellcmd` remain valid if needed.
 
