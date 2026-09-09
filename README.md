@@ -1,12 +1,12 @@
 # Building 6 VLANs on OPNsense with One NIC and No Switch (Proxmox Homelab)
 
-This guide documents a complete OPNsense and Proxmox VLAN lab built with a single physical NIC and no managed switch. It segments traffic into six VLANs — **Guest, AI, SOC, Cloud, Deception, and Targets** — using OPNsense as a virtual router inside Proxmox.
+This guide documents a complete OPNsense and Proxmox VLAN lab built with a single physical NIC and no managed switch. It segments traffic into six VLANs — **Guest, AI, SOC, Cloud, Deception, and Targets**.
 
 The procedure and troubleshooting notes are based on a working implementation and focus on practical setup details that are easy to miss in first-pass deployments.
 
 ## Why this guide exists
 
-Most VLAN tutorials assume a managed switch is already available for physical tagging. This guide covers a common starting point for homelabs: one NIC and no additional switching hardware. In this design, VLANs are fully virtualized in Proxmox until a second NIC is added.
+Most VLAN tutorials assume a managed switch is already available for physical tagging. This guide covers a common starting point for homelabs: one NIC and no additional switching hardware. In this setup, Proxmox and OPNsense handle VLAN logic entirely in software on a single physical link.
 
 ## Architecture overview
 
@@ -34,7 +34,7 @@ Home Router (does real internet NAT)
 (10)  (20)  (30)  (40)   (50)   (60)
 ```
 
-With one NIC, that physical link is dedicated to OPNsense WAN uplink traffic. All six VLANs are carried on `vmbr1`, a VLAN-aware internal bridge with no physical bridge port. As a result, only VMs can access VLAN networks until a second NIC is introduced.
+With one NIC, that physical link is dedicated to OPNsense WAN uplink traffic. All six VLANs are carried on `vmbr1`, a VLAN-aware internal bridge with no physical bridge port. As a result, only VMs attached to `vmbr1` can reach the VLANs; the Proxmox host itself is network-isolated from them (intended design).
 
 ## Part 1: Proxmox networking
 
@@ -50,7 +50,7 @@ Open `Proxmox → node → System → Network → Create → Linux Bridge` and c
 
 `vmbr0` remains unchanged and continues to carry WAN connectivity over the physical NIC.
 
-![Proxmox Create Linux Bridge dialog](./images/06-proxmox-create-linux-bridge.png)
+![Proxmox Create Linux Bridge dialog](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/06-proxmox-create-linux-bridge.png)
 *Proxmox Network view with `vmbr1` as a VLAN-aware internal bridge and `vmbr0` mapped to the physical NIC/gateway.*
 
 ### 1.2 Attach two virtual NICs to OPNsense
@@ -60,7 +60,7 @@ In `VM → Hardware`:
 - `net0` → bridge `vmbr0` (WAN)
 - `net1` → bridge `vmbr1`, **VLAN Tag left blank** (trunk carrying all VLAN tags)
 
-![OPNsense VM Hardware tab](./images/07-proxmox-opnsense-vm-hardware.png)
+![OPNsense VM Hardware tab](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/07-proxmox-opnsense-vm-hardware.png)
 *OPNsense VM hardware configuration with `net0=vmbr0` and `net1=vmbr1`.*
 
 ## Part 2: OPNsense VLAN interfaces
@@ -78,7 +78,7 @@ Go to `Interfaces → Other Types → VLAN → Add` and create six entries using
 | 50 | guests | Guest devices |
 | 60 | targets | Target systems |
 
-![OPNsense VLAN creation](./images/08-opnsense-vlan-creation.png)
+![OPNsense VLAN creation](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/08-opnsense-vlan-creation.png)
 *Six VLANs created on the trunk parent with tags 10 through 60.*
 
 ### 2.2 Assign VLANs as interfaces
@@ -87,7 +87,7 @@ In `Interfaces → Assignments`, add each `VLAN00xx on vtnet0` interface.
 
 Do not assign the untagged parent interface (`vtnet0` with no tag) as a VLAN interface. Only assign the tagged VLAN sub-interfaces.
 
-![OPNsense interface assignments](./images/09-opnsense-interface-assignments.png)
+![OPNsense interface assignments](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/09-opnsense-interface-assignments.png)
 *Each VLAN mapped to an interface assignment slot (`optX`) for tags 10, 20, 30, 40, 50, and 60.*
 
 Static gateway IPs:
@@ -101,7 +101,7 @@ Static gateway IPs:
 | guests | 192.168.50.1/24 |
 | targets | 192.168.60.1/24 |
 
-![OPNsense dashboard showing all interfaces up](./images/01-dashboard-interfaces.png)
+![OPNsense dashboard showing all interfaces up](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/01-dashboard-interfaces.png)
 *Dashboard confirmation that LAN and all six VLAN interfaces are enabled and assigned expected gateway addresses.*
 
 A `/24` per VLAN keeps addressing straightforward (`.1` gateway, `.100-.200` DHCP pool) while providing ample capacity for homelab workloads.
@@ -136,7 +136,7 @@ Two areas are essential:
 
 Default values for Domains, Hosts, DHCP options, DHCP boot, and DHCP tags are sufficient for base functionality.
 
-![Dnsmasq DHCP range dialog](./images/02-dnsmasq-dhcp-range.png)
+![Dnsmasq DHCP range dialog](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/02-dnsmasq-dhcp-range.png)
 *Dnsmasq DHCP range configuration example for interface `ai`.*
 
 ## Part 4: NAT and firewall rules
@@ -160,7 +160,7 @@ Save each rule and apply changes.
 
 A frequent misconfiguration is using `[interface] address` as Source. That value only matches the firewall interface IP, not client hosts in the VLAN, and therefore blocks VM traffic.
 
-![Firewall rule - address vs net mistake](./images/03-firewall-rule-address-vs-net.png)
+![Firewall rule - address vs net mistake](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/03-firewall-rule-address-vs-net.png)
 *Example of the `address` vs `net` source mismatch that prevents client traffic from matching the pass rule.*
 
 ## Part 5: Attach VMs to VLANs
@@ -173,7 +173,7 @@ For each VM network device:
 
 No per-VM trunk configuration is required; Proxmox applies VLAN tagging at the vNIC.
 
-![Proxmox VM network device with VLAN tag](./images/10-proxmox-vm-vlan-tag.png)
+![Proxmox VM network device with VLAN tag](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/10-proxmox-vm-vlan-tag.png)
 *VM network adapter assigned to `vmbr1` with VLAN tagging at the virtual NIC.*
 
 ### Validate from inside a VM
@@ -187,7 +187,7 @@ ping 8.8.8.8            # test internet by IP
 ping google.com         # test DNS resolution
 ```
 
-![Verified working VM on the ai VLAN](./images/11-wazuh-vm-verified-internet.png)
+![Verified working VM on the ai VLAN](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/11-wazuh-vm-verified-internet.png)
 *Example validation output showing successful DHCP assignment and internet connectivity from a VLAN guest VM.*
 
 ## Troubleshooting
@@ -221,10 +221,10 @@ ping google.com         # test DNS resolution
 3. Remove or tighten the WAN SSH rule after use.
 4. Use the Proxmox VM console (`Console → option 8) Shell`) as a zero-exposure alternative.
 
-![Firewall WAN SSH rule](./images/04-firewall-wan-ssh-rule.png)
+![Firewall WAN SSH rule](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/04-firewall-wan-ssh-rule.png)
 *WAN SSH rule restricted to a single source IP.*
 
-### 4) `tailscale status` returns “Failed to connect to local Tailscale daemon”
+### 4) `tailscale status` returns "Failed to connect to local Tailscale daemon"
 
 **Cause:** `tailscaled` service is not running.
 
@@ -255,7 +255,7 @@ service tailscaled start
 
 **Cause:** Community `os-tailscale` plugin behavior can overwrite manual `sysrc` persistence during boot.
 
-**Resolution that worked in this setup:** Use `VPN → Tailscale → Settings`, enable the plugin there, and save from the plugin settings page. This hands startup management back to OPNsense services.
+**Resolution that worked in this setup:** Use `VPN → Tailscale → Settings`, enable the plugin there, and save from the plugin settings page. This hands startup management back to OPNsense service boot order.
 
 Fallback options such as `@reboot` jobs or `os-shellcmd` remain valid if needed.
 
@@ -293,7 +293,7 @@ Recommended settings:
 - **OPNsense:** Advertise routes = Yes (six VLAN subnets), Exit node = No
 - **Laptop:** Accept subnet routes = Yes, Use exit node = No
 
-![OPNsense Tailscale advertised routes](./images/05-tailscale-advertised-routes.png)
+![OPNsense Tailscale advertised routes](https://github.com/socilate47/setting-up-my-homelab/blob/copilot/rewrite-readme-professional-style/images/05-tailscale-advertised-routes.png)
 *Tailscale advertised routes for the six VLAN subnets without overlap to home LAN ranges.*
 
 The long-term fix is to add a second NIC (or USB-to-Ethernet adapter) and bridge it into `vmbr1` for direct physical VLAN access.
