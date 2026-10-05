@@ -2,6 +2,8 @@
 
 This guide documents a complete OPNsense and Proxmox VLAN lab built with a single physical NIC and no managed switch. It segments traffic into six VLANs — **Guest, AI, SOC, Cloud, Deception, and Targets** — and adds secure remote reachability using Tailscale subnet routing.
 
+For host and guest monitoring, see the [Prometheus and Grafana on Proxmox guide](docs/Prometheus-Proxmox-Guide.docx).
+
 The procedure and troubleshooting notes are based on a working implementation and focus on practical setup details that are easy to miss in first-pass deployments.
 
 ## Why this guide exists
